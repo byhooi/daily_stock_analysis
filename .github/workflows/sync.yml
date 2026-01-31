@@ -1,38 +1,62 @@
 name: Upstream Sync
 
 permissions:
-  contents: write
+  contents: write
 
 on:
-  schedule:
-    - cron: "0 0 * * *" # 每天国际标准时间 0点（北京时间早8点）运行
-  workflow_dispatch: # 允许你手动点击按钮立刻同步
+  schedule:
+    - cron: "0 0 * * *" # 每天北京时间早8点
+  workflow_dispatch:
 
 jobs:
-  sync_latest_from_upstream:
-    runs-on: ubuntu-latest
-    name: Sync latest commits from upstream repo
+  sync_latest_from_upstream:
+    runs-on: ubuntu-latest
+    name: Sync latest commits from upstream repo
 
-    steps:
-    - name: Checkout target repo
-      uses: actions/checkout@v3
+    steps:
+    - name: Checkout target repo
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
 
-    - name: Sync upstream changes
-      id: sync
-      uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
-      with:
-        # 这里已经填好了原作者地址
-        upstream_sync_repo: ZhuLinsen/daily_stock_analysis
-        
-        # ⚠️ 注意：原仓库如果是 'master' 分支，请将下面两行改为 'master'
-        upstream_sync_branch: main
-        target_sync_branch: main
-        
-        target_repo_token: ${{ secrets.GITHUB_TOKEN }}
-        test_mode: false
+    - name: Sync Upstream
+      uses: actions/github-script@v6
+      with:
+        script: |
+          // 👇 1. 设置上游仓库地址
+          const upstream_repo = "ZhuLinsen/daily_stock_analysis";
+          
+          // 👇 2. 设置分支 (你这个仓库默认是 main)
+          const branch = "main"; 
 
-    - name: Sync check
-      if: failure()
-      run: |
-        echo "[Error] 自动同步失败，可能是上游代码变动导致冲突，请手动检查。"
-        exit 1
+          try {
+            // ❌ 删除了报错的 require 行，直接使用内置的 exec
+            
+            // 配置机器人身份
+            await exec.exec("git config --global user.name 'GitHub Actions'");
+            await exec.exec("git config --global user.email 'actions@github.com'");
+
+            // 拉取上游代码
+            await exec.exec(`git remote add upstream https://github.com/${upstream_repo}.git`);
+            await exec.exec("git fetch upstream");
+
+            // 确保切换到 main 分支
+            await exec.exec(`git checkout ${branch}`);
+
+            // 尝试合并 (这步会保留你的 sync.yml)
+            try {
+              await exec.exec(`git merge upstream/${branch} --no-edit`);
+            } catch (error) {
+              console.log("⚠️ Merge 冲突，尝试自动解决...");
+              // 这里的 throw 会被外层捕获并报告失败
+              throw error;
+            }
+
+            // 推送
+            await exec.exec("git push origin");
+            console.log("✅ 同步成功！");
+            
+          } catch (error) {
+            console.error("❌ 同步失败:", error);
+            core.setFailed(error.message);
+          }
