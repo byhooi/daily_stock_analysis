@@ -5,8 +5,8 @@ permissions:
 
 on:
   schedule:
-    - cron: "0 0 * * *" # 每天国际标准时间 0点（北京时间早8点）运行
-  workflow_dispatch: # 允许你手动点击按钮立刻同步
+    - cron: "0 0 * * *" # 每天北京时间早8点
+  workflow_dispatch:
 
 jobs:
   sync_latest_from_upstream:
@@ -16,23 +16,43 @@ jobs:
     steps:
     - name: Checkout target repo
       uses: actions/checkout@v3
-
-    - name: Sync upstream changes
-      id: sync
-      uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
       with:
-        # 这里已经填好了原作者地址
-        upstream_sync_repo: ZhuLinsen/daily_stock_analysis
-        
-        # ⚠️ 注意：原仓库如果是 'master' 分支，请将下面两行改为 'master'
-        upstream_sync_branch: main
-        target_sync_branch: main
-        
-        target_repo_token: ${{ secrets.GITHUB_TOKEN }}
-        test_mode: false
+        # 必须拉取全部历史，否则无法 merge
+        fetch-depth: 0
 
-    - name: Sync check
-      if: failure()
-      run: |
-        echo "[Error] 自动同步失败，可能是上游代码变动导致冲突，请手动检查。"
-        exit 1
+    - name: Sync Upstream
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const upstream_repo = "ZhuLinsen/daily_stock_analysis";
+          const branch = "main"; // 如果原作者是 master，这里改 master
+
+          try {
+            // 1. 配置 Git 身份
+            await exec.exec("git config --global user.name 'GitHub Actions'");
+            await exec.exec("git config --global user.email 'actions@github.com'");
+
+            // 2. 添加上游仓库并拉取
+            await exec.exec(`git remote add upstream https://github.com/${upstream_repo}.git`);
+            await exec.exec("git fetch upstream");
+
+            // 3. 尝试合并 (关键步骤)
+            // --no-edit: 使用默认合并信息
+            // 这一步会把你依然保留 sync.yml 的同时，把上游新代码合进来
+            try {
+              await exec.exec(`git merge upstream/${branch} --no-edit`);
+            } catch (error) {
+              console.log("Merge conflict or error, trying to resolve...");
+              // 如果只是普通的冲突，有时候需要策略，但对于 sync 脚本通常只要合并即可
+              // 如果这里失败，通常意味着原作者改了和我不一样的核心文件，几率很小
+              throw error;
+            }
+
+            // 4. 推送回你的仓库
+            await exec.exec("git push origin");
+            console.log("✅ 同步成功！");
+            
+          } catch (error) {
+            console.error("❌ 同步失败:", error);
+            core.setFailed(error.message);
+          }
