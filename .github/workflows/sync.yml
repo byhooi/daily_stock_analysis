@@ -1,62 +1,129 @@
 name: Upstream Sync
 
+
+
 permissions:
+
   contents: write
 
+
+
 on:
+
   schedule:
+
     - cron: "0 0 * * *" # 每天北京时间早8点
+
   workflow_dispatch:
 
+
+
 jobs:
+
   sync_latest_from_upstream:
+
     runs-on: ubuntu-latest
+
     name: Sync latest commits from upstream repo
 
+
+
     steps:
+
     - name: Checkout target repo
+
       uses: actions/checkout@v3
+
       with:
+
         fetch-depth: 0
 
+
+
     - name: Sync Upstream
+
       uses: actions/github-script@v6
+
       with:
+
         script: |
+
           // 👇 1. 设置上游仓库地址
+
           const upstream_repo = "ZhuLinsen/daily_stock_analysis";
+
           
-          // 👇 2. 设置分支 (你这个仓库默认是 main)
+
+          // 👇 2. 设置分支
+
           const branch = "main"; 
 
+
+
           try {
-            // ❌ 删除了报错的 require 行，直接使用内置的 exec
+
+            const exec = require('@actions/exec'); // 这一行在 v6 中其实不需要，但保留也不报错，为了保险可以删掉
+
             
-            // 配置机器人身份
+
+            // 配置身份
+
             await exec.exec("git config --global user.name 'GitHub Actions'");
+
             await exec.exec("git config --global user.email 'actions@github.com'");
 
-            // 拉取上游代码
+
+
+            // 添加上游并获取更新
+
             await exec.exec(`git remote add upstream https://github.com/${upstream_repo}.git`);
+
             await exec.exec("git fetch upstream");
 
+
+
             // 确保切换到 main 分支
+
             await exec.exec(`git checkout ${branch}`);
 
-            // 尝试合并 (这步会保留你的 sync.yml)
+
+
+            // ⚡️ 关键修改：霸道合并模式
+
+            // --allow-unrelated-histories: 解决“历史不相关”报错
+
+            // -X theirs: 遇到冲突时，无条件使用上游作者的版本
+
             try {
-              await exec.exec(`git merge upstream/${branch} --no-edit`);
+
+              console.log("尝试合并上游代码...");
+
+              await exec.exec(`git merge upstream/${branch} -X theirs --allow-unrelated-histories --no-edit`);
+
             } catch (error) {
-              console.log("⚠️ Merge 冲突，尝试自动解决...");
-              // 这里的 throw 会被外层捕获并报告失败
+
+              console.error("合并依然失败，正在输出详细日志...");
+
+              await exec.exec("git status");
+
               throw error;
+
             }
 
+
+
             // 推送
+
             await exec.exec("git push origin");
+
             console.log("✅ 同步成功！");
+
             
+
           } catch (error) {
+
             console.error("❌ 同步失败:", error);
+
             core.setFailed(error.message);
+
           }
